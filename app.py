@@ -44,6 +44,7 @@ def list_documents(api_key: str, store_name: str):
     {
       "문서 이름": doc.name,
       "표시 이름": getattr(doc, "display_name", ""),
+      "크기": getattr(doc, "size_bytes", ""),
       "생성 시각": str(getattr(doc, "create_time", "")),
       "수정 시각": str(getattr(doc, "update_time", "")),
     }
@@ -140,7 +141,33 @@ def main():
       st.error(f"문서 목록을 불러오는 중 오류가 발생했습니다: {exc}")
       docs = []
     if docs:
-      st.dataframe(docs, use_container_width=True)
+      docs_df = pd.DataFrame(docs)
+      docs_selector = st.dataframe(
+        docs_df,
+        hide_index=True,
+        use_container_width=True,
+        selection_mode="multi-row",
+        on_select="rerun",
+        key=f"docs_selector_{selected_store}",
+      )
+      selection = getattr(docs_selector, "selection", {}) or {}
+      selected_rows = selection.get("rows", [])
+      if selected_rows:
+        st.warning("선택한 문서를 삭제하면 되돌릴 수 없습니다.", icon="⚠️")
+        if st.button("선택 문서 삭제", type="primary", key=f"docs_delete_{selected_store}"):
+          client = genai.Client(api_key=api_key)
+          for idx in selected_rows:
+            row = docs_df.iloc[idx]
+            doc_name = row.get("문서 이름")
+            if not doc_name:
+              continue
+            with st.spinner(f"삭제 중: {doc_name}"):
+              try:
+                client.file_search_stores.documents.delete(name=doc_name, config={"force": True})
+                st.toast(f"삭제 완료: {doc_name}")
+              except Exception as exc:  # noqa: BLE001
+                st.error(f"삭제 실패 ({doc_name}): {exc}")
+          list_documents.clear()
     else:
       st.info("선택한 스토어에 문서가 없습니다.")
 
