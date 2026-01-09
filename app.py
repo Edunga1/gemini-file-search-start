@@ -1,4 +1,6 @@
 import os
+import tempfile
+import time
 
 import pandas as pd
 import streamlit as st
@@ -47,6 +49,26 @@ def list_documents(api_key: str, store_name: str):
     }
     for doc in docs
   ]
+
+
+def upload_document_to_store(api_key: str, store_name: str, uploaded_file) -> None:
+  client = genai.Client(api_key=api_key)
+  suffix = os.path.splitext(uploaded_file.name)[1]
+  with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+    tmp.write(uploaded_file.getbuffer())
+    tmp_path = tmp.name
+
+  try:
+    operation = client.file_search_stores.upload_to_file_search_store(
+      file=tmp_path,
+      file_search_store_name=store_name,
+      config={"display_name": uploaded_file.name},
+    )
+    while not operation.done:
+      time.sleep(2)
+      operation = client.operations.get(operation)
+  finally:
+    os.remove(tmp_path)
 
 
 def render_store_selector(stores: list[dict]) -> tuple[str | None, pd.DataFrame]:
@@ -121,6 +143,28 @@ def main():
       st.dataframe(docs, use_container_width=True)
     else:
       st.info("선택한 스토어에 문서가 없습니다.")
+
+    st.subheader("파일 업로드")
+    uploaded_files = st.file_uploader(
+      "파일을 드래그 앤 드롭해서 업로드하세요.",
+      accept_multiple_files=True,
+      key="file_uploader",
+    )
+    if uploaded_files:
+      processed = st.session_state.setdefault("uploaded_files", {})
+      for uploaded_file in uploaded_files:
+        file_key = f"{selected_store}:{uploaded_file.name}:{uploaded_file.size}"
+        if processed.get(file_key):
+          st.info(f"이미 업로드된 파일: {uploaded_file.name}")
+          continue
+        with st.spinner(f"{uploaded_file.name} 업로드 중..."):
+          try:
+            upload_document_to_store(api_key, selected_store, uploaded_file)
+            processed[file_key] = True
+            list_documents.clear()
+            st.success(f"업로드 완료: {uploaded_file.name}")
+          except Exception as exc:  # noqa: BLE001
+            st.error(f"파일 업로드 중 오류가 발생했습니다: {exc}")
 
   st.subheader("프롬프트")
   prompt = st.text_area("질의 내용", height=160, placeholder="프롬프트를 입력하세요.")
