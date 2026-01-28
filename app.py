@@ -33,24 +33,35 @@ def list_file_search_stores(api_key: str):
   ]
 
 
+PAGE_SIZE = 20
+
+
 @st.cache_data(show_spinner=False, ttl=60)
-def list_documents(api_key: str, store_name: str):
+def list_documents(api_key: str, store_name: str, page_token: str | None = None):
   client = genai.Client(api_key=api_key)
-  docs = list(
-    client.file_search_stores.documents.list(
-      parent=store_name,
-    )
+  config = {"page_size": PAGE_SIZE}
+  if page_token:
+    config["page_token"] = page_token
+  pager = client.file_search_stores.documents.list(
+    parent=store_name,
+    config=config,
   )
-  return [
-    {
+  docs = []
+  for doc in pager:
+    docs.append({
       "문서 이름": doc.name,
       "표시 이름": getattr(doc, "display_name", ""),
       "크기": getattr(doc, "size_bytes", ""),
       "생성 시각": str(getattr(doc, "create_time", "")),
       "수정 시각": str(getattr(doc, "update_time", "")),
-    }
-    for doc in docs
-  ]
+    })
+    if len(docs) >= PAGE_SIZE:
+      break
+  next_page_token = pager._config.get("page_token") if hasattr(pager, "_config") else None
+  # 입력한 토큰과 같으면 다음 페이지 없음
+  if next_page_token == page_token:
+    next_page_token = None
+  return docs, next_page_token
 
 
 def upload_document_to_store(api_key: str, store_name: str, uploaded_file) -> None:
@@ -116,10 +127,17 @@ def render_page_header():
   st.caption("Gemini File Search 스토어를 선택해 쿼리합니다.")
 
 
+def reset_docs_pagination():
+  keys_to_remove = [k for k in st.session_state if k.startswith("docs_page_")]
+  for k in keys_to_remove:
+    del st.session_state[k]
+
+
 def render_refresh_controls():
   if st.button("새로 고침", type="secondary"):
     list_file_search_stores.clear()
     list_documents.clear()
+    reset_docs_pagination()
 
 def load_stores(api_key: str) -> list[dict] | None:
   try:
@@ -129,13 +147,27 @@ def load_stores(api_key: str) -> list[dict] | None:
     st.stop()
 
 
+def get_docs_page_state(store_name: str) -> dict:
+  key = f"docs_page_{store_name}"
+  if key not in st.session_state:
+    st.session_state[key] = {"page_tokens": [None], "current_index": 0}
+  return st.session_state[key]
+
+
 def render_documents_section(api_key: str, selected_store: str):
   st.subheader("문서 목록")
+
+  page_state = get_docs_page_state(selected_store)
+  current_index = page_state["current_index"]
+  page_tokens = page_state["page_tokens"]
+  current_token = page_tokens[current_index]
+
   try:
-    docs = list_documents(api_key, selected_store)
+    docs, next_page_token = list_documents(api_key, selected_store, current_token)
   except Exception as exc:
     st.error(f"문서 목록을 불러오는 중 오류가 발생했습니다: {exc}")
-    docs = []
+    docs, next_page_token = [], None
+
   if docs:
     docs_df = pd.DataFrame(docs)
     docs_selector = st.dataframe(
@@ -144,8 +176,23 @@ def render_documents_section(api_key: str, selected_store: str):
       width="stretch",
       selection_mode="multi-row",
       on_select="rerun",
-      key=f"docs_selector_{selected_store}",
+      key=f"docs_selector_{selected_store}_{current_index}",
     )
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+      if st.button("◀ 이전", disabled=(current_index == 0), key=f"prev_{selected_store}"):
+        page_state["current_index"] = current_index - 1
+        st.rerun()
+    with col2:
+      st.write(f"페이지 {current_index + 1}")
+    with col3:
+      if st.button("다음 ▶", disabled=(next_page_token is None), key=f"next_{selected_store}"):
+        if len(page_tokens) <= current_index + 1:
+          page_tokens.append(next_page_token)
+        page_state["current_index"] = current_index + 1
+        st.rerun()
+
     selection = getattr(docs_selector, "selection", {}) or {}
     selected_rows = selection.get("rows", [])
     if selected_rows:
@@ -164,6 +211,9 @@ def render_documents_section(api_key: str, selected_store: str):
             except Exception as exc:  # noqa: BLE001
               st.error(f"삭제 실패 ({doc_name}): {exc}")
         list_documents.clear()
+        page_state["page_tokens"] = [None]
+        page_state["current_index"] = 0
+        st.rerun()
   else:
     st.info("선택한 스토어에 문서가 없습니다.")
 
@@ -187,6 +237,7 @@ def render_upload_section(api_key: str, selected_store: str):
           upload_document_to_store(api_key, selected_store, uploaded_file)
           processed[file_key] = True
           list_documents.clear()
+          reset_docs_pagination()
           st.success(f"업로드 완료: {uploaded_file.name}")
         except Exception as exc:  # noqa: BLE001
           st.error(f"파일 업로드 중 오류가 발생했습니다: {exc}")
