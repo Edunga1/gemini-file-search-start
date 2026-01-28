@@ -103,9 +103,9 @@ def render_store_selector(stores: list[dict]) -> str | None:
   return None
 
 
-def run_query(api_key: str, store_name: str, history: list[dict]) -> str:
+def run_query(api_key: str, store_name: str, history: list[dict]) -> str | None:
   client = genai.Client(api_key=api_key)
-  contents = [
+  contents: types.ContentListUnionDict = [
     types.Content(role=msg["role"], parts=[types.Part(text=msg["text"])])
     for msg in history
   ]
