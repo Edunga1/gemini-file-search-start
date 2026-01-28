@@ -142,7 +142,7 @@ def render_refresh_controls():
 def load_stores(api_key: str) -> list[dict] | None:
   try:
     return list_file_search_stores(api_key)
-  except Exception as exc:  # noqa: BLE001
+  except Exception as exc:
     st.error(f"스토어 목록을 불러오는 중 오류가 발생했습니다: {exc}")
     st.stop()
 
@@ -208,7 +208,7 @@ def render_documents_section(api_key: str, selected_store: str):
             try:
               client.file_search_stores.documents.delete(name=doc_name, config={"force": True})
               st.toast(f"삭제 완료: {doc_name}")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
               st.error(f"삭제 실패 ({doc_name}): {exc}")
         list_documents.clear()
         page_state["page_tokens"] = [None]
@@ -239,7 +239,7 @@ def render_upload_section(api_key: str, selected_store: str):
           list_documents.clear()
           reset_docs_pagination()
           st.success(f"업로드 완료: {uploaded_file.name}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
           st.error(f"파일 업로드 중 오류가 발생했습니다: {exc}")
 
 
