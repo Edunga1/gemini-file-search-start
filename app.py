@@ -103,11 +103,15 @@ def render_store_selector(stores: list[dict]) -> str | None:
   return None
 
 
-def run_query(api_key: str, store_name: str, prompt: str) -> str:
+def run_query(api_key: str, store_name: str, history: list[dict]) -> str:
   client = genai.Client(api_key=api_key)
+  contents = [
+    types.Content(role=msg["role"], parts=[types.Part(text=msg["text"])])
+    for msg in history
+  ]
   response = client.models.generate_content(
     model="gemini-2.5-flash",
-    contents=prompt,
+    contents=contents,
     config=types.GenerateContentConfig(
       tools=[
         types.Tool(
@@ -243,26 +247,49 @@ def render_upload_section(api_key: str, selected_store: str):
           st.error(f"파일 업로드 중 오류가 발생했습니다: {exc}")
 
 
-def render_prompt_and_results(api_key: str, selected_store: str | None):
-  st.subheader("프롬프트")
-  prompt = st.text_area("질의 내용", height=160, placeholder="프롬프트를 입력하세요.")
-  query_button = st.button(
-    "질의 실행",
-    type="primary",
-    disabled=(selected_store is None) or (not prompt.strip()),
-  )
+def get_chat_history(store_name: str) -> list[dict]:
+  key = f"chat_history_{store_name}"
+  if key not in st.session_state:
+    st.session_state[key] = []
+  return st.session_state[key]
 
-  if query_button and selected_store is not None:
-    with st.spinner("응답 생성 중..."):
-      try:
-        result = run_query(api_key, selected_store, prompt)
-        st.session_state["last_result"] = result
-      except Exception as exc:
-        st.error(f"쿼리 수행 중 오류가 발생했습니다: {exc}")
 
-  if "last_result" in st.session_state:
-    st.subheader("결과")
-    st.write(st.session_state["last_result"])
+def render_chat(api_key: str, selected_store: str | None):
+  st.subheader("대화")
+
+  if selected_store:
+    history = get_chat_history(selected_store)
+
+    # 대화 기록 표시
+    for msg in history:
+      # Gemini는 "model", Streamlit은 "assistant" 사용
+      role = "assistant" if msg["role"] == "model" else msg["role"]
+      with st.chat_message(role):
+        st.write(msg["text"])
+
+    # 새 대화 버튼
+    if history and st.button("대화 초기화", type="secondary"):
+      history.clear()
+      st.rerun()
+
+  prompt = st.chat_input("메시지를 입력하세요.", disabled=(selected_store is None))
+
+  if prompt and selected_store is not None:
+    history = get_chat_history(selected_store)
+    history.append({"role": "user", "text": prompt})
+
+    with st.chat_message("user"):
+      st.write(prompt)
+
+    with st.chat_message("assistant"):
+      with st.spinner("응답 생성 중..."):
+        try:
+          result = run_query(api_key, selected_store, history)
+          history.append({"role": "model", "text": result})
+          st.write(result)
+        except Exception as exc:
+          st.error(f"쿼리 수행 중 오류가 발생했습니다: {exc}")
+          history.pop()  # 실패한 user 메시지 제거
 
 
 def main():
@@ -284,7 +311,7 @@ def main():
     render_documents_section(api_key, selected_store)
     render_upload_section(api_key, selected_store)
 
-  render_prompt_and_results(api_key, selected_store)
+  render_chat(api_key, selected_store)
 
 
 if __name__ == "__main__":
