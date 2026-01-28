@@ -39,7 +39,7 @@ PAGE_SIZE = 20
 @st.cache_data(show_spinner=False, ttl=60)
 def list_documents(api_key: str, store_name: str, page_token: str | None = None):
   client = genai.Client(api_key=api_key)
-  config = {"page_size": PAGE_SIZE}
+  config: types.ListDocumentsConfigOrDict = {"page_size": PAGE_SIZE}
   if page_token:
     config["page_token"] = page_token
   pager = client.file_search_stores.documents.list(
